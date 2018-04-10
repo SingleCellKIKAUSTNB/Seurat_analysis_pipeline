@@ -204,23 +204,34 @@ rm(lista_var_genes, lista_var_genes_all)
 
 #######################################################
 #Batch correction based in MNN method
+#######################################################
+#Creating a list with all matrizes
 lista_matrix = list()
 for (n in 1:length(file_list)){
   cols = list_all_Seurat[[n]]@scale.data
   lista_matrix = append(lista_matrix, list(cols))
-  assign(paste0(file_list[n]), as.matrix(lista_matrix[[n]]))
   rm(cols)
 }
-overlap_genes = Reduce(intersect, list((rownames(data_pre)), (rownames(data_post)), (rownames(data_prog1)), (rownames(data_prog2)),(rownames(data_response))))
 
-data_pre = data_pre[rownames(data_pre) %in% overlap_genes,]
-data_post = data_post[rownames(data_post) %in% overlap_genes,]
-data_prog1 = data_prog1[rownames(data_prog1) %in% overlap_genes,]
-data_prog2 = data_prog2[rownames(data_prog2) %in% overlap_genes,]
-data_response = data_response[rownames(data_response) %in% overlap_genes,]
+#######################################################
+#Selecting overlaping genes between datasets
+overlap_genes = Reduce(intersect, list(rownames(lista_matrix[[1]])), (rownames(lista_matrix[[2]])))
+if (length(file_list) > 2){
+  for (n in 3:length(file_list)){
+  overlap_genes = Reduce(intersect, list(overlap_genes, (rownames(lista_matrix[[n]]))))
+  }
+}
 
+#######################################################
+#Creating final matrizes
+for (n in 1:length(file_list)){
+  assign(paste0(file_list[n]), lista_matrix[[n]][rownames(lista_matrix[[n]]) %in% overlap_genes,])
+}
+
+#######################################################
+#THIS names NEEDS TO BE CHANGED FOR YOUR SPECIFIC DATA
+#Apply mnnCorrect batch correction method 
 temporal = mnnCorrect(data_pre, data_post, data_prog1, data_prog2, data_response, subset.row=genes.use)
-#joint_expression_matrix <- cbind(corrected$corrected[[1]], corrected$corrected[[2]])
 
 for (n in 1:length(file_list)){
   temporal_final=data.frame(temporal[1]$corrected[[n]])
@@ -241,19 +252,22 @@ if (length(file_list) >2){
   #  genes.use = genes.use[genes.use %in% rownames(list_all_Seurat[[n]]@scale.data)]
   #}
   multiCCA = RunMultiCCA(list_all_Seurat, genes.use = genes.use, num.ccs = 25)
+  Metagene_plot = MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:25)
   pdf(file="PC_selection.pdf")
-  MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:25)
+  plot(Metagene_plot)
   dev.off()
   
 }else{
   multiCCA <- RunCCA(list_all_Seurat[[1]], list_all_Seurat[[2]], genes.use = genes.use)
+  Metagene_plot = MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:2)
   pdf(file="PC_selection.pdf")
-  MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:2)
+  plot(Metagene_plot)
   dev.off()
 }
 
 #######################################################
-#Scale data
+#NOT usefull its done with mnnCorrect
+#Scale data and batch correct it with linear regression 
 #multiCCA = ScaleData(multiCCA, vars.to.regress = c("protocol"))
 
 #######################################################
@@ -276,6 +290,16 @@ JackStrawPlot(object = multiCCA, PCs = 1:20)
 dev.off()
 
 #######################################################
+#Automaticaly select the best CC amount based in MetageneBicorPlot result
+Metagene_result = split(Metagene_plot$data$bicor, ceiling(seq_along(Metagene_plot$data$bicor)/25))
+cc_list = c()
+for (n in 1:length(file_list)){
+  cc_list = append(cc_list ,min(which(Metagene_result[[n]] < 0.13)))
+}
+cc_number = min(cc_list)
+rm(Metagene_result)
+
+#######################################################
 #Before Align situation of data
 pdf(file="MultiCCA_cc1_cc2_Before_Align.pdf", width=12, height=6)
 #plot CC1 versus CC2 and look at a violin plot
@@ -287,7 +311,7 @@ dev.off()
 
 #######################################################
 #Before align search cells whose profile cannot be well_explained by low_dimensional CCA compared to low-dimensional PCA
-multiCCA = CalcVarExpRatio(multiCCA, reduction.type = "pca", grouping.var = "protocol", dims.use = 1:17)
+multiCCA = CalcVarExpRatio(multiCCA, reduction.type = "pca", grouping.var = "protocol", dims.use = 1:cc_number)
 multiCCA.all = multiCCA
 
 #######################################################
@@ -298,7 +322,7 @@ multiCCA = SubsetData(multiCCA, subset.name = "var.ratio.pca", accept.low = 0.5)
 multiCCA.discard = SubsetData(multiCCA.all, subset.name = "var.ratio.pca", accept.high = 0.5)
 
 #Align subspaces for obtaining CCA_ALIGNED
-multiCCA = AlignSubspace(multiCCA, reduction.type = "cca", grouping.var = "protocol", dims.align = 1:17)
+multiCCA = AlignSubspace(multiCCA, reduction.type = "cca", grouping.var = "protocol", dims.align = 1:cc_number)
 
 pdf(file="MultiCCA_cc1_cc2_After_Align.pdf", width=12, height=6)
 p1 = DimPlot(multiCCA, reduction.use = "cca.aligned", group.by = "protocol", pt.size = 0.5,
@@ -309,8 +333,8 @@ dev.off()
 
 #######################################################
 #TSNE plot generation
-multiCCA = RunTSNE(multiCCA, reduction.use = "cca.aligned", dims.use = 1:17, do.fast = T, perplexity = 100, check_duplicates = FALSE)
-multiCCA = FindClusters(multiCCA, reduction.type = "cca.aligned", dims.use = 1:17, save.SNN = T)
+multiCCA = RunTSNE(multiCCA, reduction.use = "cca.aligned", dims.use = 1:cc_number, do.fast = T, perplexity = 100, check_duplicates = FALSE)
+multiCCA = FindClusters(multiCCA, reduction.type = "cca.aligned", dims.use = 1:cc_number, save.SNN = T)
 
 pdf(file="TSNE.pdf", width=12, height=6)
 p1 = TSNEPlot(multiCCA, group.by = "protocol", do.return = T, pt.size = 0.5)
@@ -319,66 +343,6 @@ plot_grid(p1, p2)
 dev.off()
 
 rownames(multiCCA@dr$tsne@cell.embeddings)
-ls(pattern="data_pre_")
-
-#######################################################
-#Raw data for doing de BULKrna-seq projection
-data_matrix=data.frame(as.matrix(multiCCA@raw.data))
-groups=multiCCA@meta.data$protocol
-
-cluster_ident=data.frame(multiCCA@ident)
-cluster_ident['Cells'] = rownames(cluster_ident)
-
-#######################################################
-#BULK simulation for batch projection in order to see how differet the batches are
-#data_pre=data.frame(as.matrix(counts(data_pre)))
-#data_post=data.frame(as.matrix(counts(data_post)))
-#data_prog1=data.frame(as.matrix(counts(data_prog1)))
-#data_prog2=data.frame(as.matrix(counts(data_prog2)))
-#data_response=data.frame(as.matrix(counts(data_response)))
-#data_matrix = Reduce(function(x, y) merge(x, y, all=TRUE), list(data_pre, data_post))
-
-library("EDASeq")
-
-gc_and_length=getGeneLengthAndGCContent(rownames(data_matrix), 'hsapiens_gene_ensembl', mode=c("biomart"))
-gc_and_length = data.frame(gc_and_length)
-gc_and_length = gc_and_length[complete.cases(gc_and_length), ]
-
-data_matrix = data_matrix[rownames(gc_and_length),]
-
-data_matrix$data_pre_mean = apply(data_matrix[,c(1:1851)],1,sum)
-data_matrix$data_post_mean = apply(data_matrix[,c((1851+1):(1851+1+1289))],1,sum)
-data_matrix$data_prog1_mean = apply(data_matrix[,c((1851+1+1289+1):(1851+1+1289+1+1970))],1,sum)
-data_matrix$data_prog2_mean = apply(data_matrix[,c((1851+1+1289+1+1970+1):(1851+1+1289+1+1970+1+1916))],1,sum)
-data_matrix$data_response = apply(data_matrix[,c((1851+1+1289+1+1970+1+1916+1):(1851+1+1289+1+1970+1+1916+1+1203))],1,sum)
-
-data_matrix_projections = data_matrix[,8235:8239]
-data_matrix_projections_cpm <- edgeR::cpm(data_matrix_projections)
-keep = rowSums(data_matrix_projections_cpm >1) >= 3
-data_matrix_projections_cpm = data_matrix_projections_cpm[keep,]
-
-gc_and_length = gc_and_length[rownames(data_matrix_projections_cpm),]
-gc_content = gc_and_length[,2]
-g_length = gc_and_length[,1]
-
-library("cqn")
-data_matrix_projections_2 = cqn(data_matrix_projections_cpm, x=gc_content,lengths=g_length)
-
-
-library(factoextra)
-res.pca <- prcomp(t(data_matrix_projections_2$counts), scale = TRUE)
-fviz_pca_ind(res.pca,
-             col.ind = "cos2", # Color by the quality of representation
-             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-             repel = TRUE     # Avoid text overlapping
-)
-
-library(Rtsne)
-rtsne_out <- Rtsne(as.matrix(t(data_matrix_projections_2$counts)),perplexity = 1)
-jpeg("TSNE_BULK_RNA-SEQ.jpg", width=1200, height=900)
-plot(rtsne_out$Y, t='n', main="BULK-RNAseq")
-text(rtsne_out$Y, labels=rownames(t(data_matrix_projections_2$counts)))
-dev.off()
 
 ####
 #PROCESSING -> DE ANALYSIS
@@ -392,7 +356,10 @@ multiCCA.markers = (subset(multiCCA.markers,(multiCCA.markers['p_val_adj'] <= 0.
 #######################################################
 #Prepare data
 max_cluster = max(as.integer(multiCCA.markers$cluster))
+
+cluster_ident=data.frame(multiCCA@ident)
 cluster_ident['group'] = multiCCA@meta.data$protocol
+cluster_ident['Cells'] = rownames(cluster_ident)
 
 #######################################################
 #Plot principal markers for each cluster
@@ -406,10 +373,6 @@ for (n in 0:(max_cluster-1)){
   )
 }
 dev.off()
-
-#######################################################
-#Save
-save.image("Data_SAVE.RData")
 
 #######################################################
 #Enrichment by cluster
@@ -431,7 +394,6 @@ for (n in 1:length(file_list)){
   oddsratio_barplot(lista_pValues, lista_estimate, max_cluster, paste0("Barplot_enrichment", file_list[n], ".pdf"))
 }
 
-
 ################################################################################################################
 ################################################################################################################
 ###
@@ -440,9 +402,6 @@ for (n in 1:length(file_list)){
 #######################################################
 gsc.GO = create_GO_universe(org.Hs.egGO, "Homo sapiens")
 gsc.KEGG = create_KEGG_universe(org.Hs.egPATH, "Homo sapiens")
-
-#ListaGenesGO<-as.matrix(geneIds(gsc.GO))
-#ListaGenesGO<-data.frame(ListaGenesGO)
 
 ##############
 #GOstats
@@ -456,20 +415,33 @@ universe = Lkeys(org.Hs.egGO)
 #######################################################
 sectors = c('BP', 'CC' , 'MF')
 for (n in 0:(max_cluster-1)) {
-  #GO
+  #GO-All
   cluster_markers = multiCCA.markers$gene[multiCCA.markers$cluster == n]
   annotation = name_changer('ensembl', 'hsapiens_gene_ensembl', cluster_markers)
   entrezgene = annotation$entrezgene[match(cluster_markers, annotation$ensembl_gene_id)]
   annotations = as.character(entrezgene)
   for (i in 1:length(sectors)){
     tmp = gsea_HyperG_GO("GOstats", gsc.GO, annotations, sectors[i], 1)
-    #tmp$genes = ListaGenesGO[match(tmp[,1], rownames(ListaGenesGO)),"ListaGenesGO"]
+    name = paste0("GOresults", sectors[i], "_", "cluster", "_", n)
+    assign(paste0(name), tmp)
     
-    #for (n in 1:length(tmp[,1])){
-    #  tmp$genes[n] = list(annotation$external_gene_name[(annotation$entrezgene %in% unlist(tmp$genes[n])) ==TRUE])
-    #}
+    #Go-All-Plots
+    lista_pValues = -log2(head(get(name)$Count, 10))
+    lista_estimate = log10(head(get(name)$OddsRatio, 10))
+    lista_total = c(lista_pValues,lista_estimate)
+    lista_names= (head(get(name)$Term, 10))
+    dat <- data.frame(
+      type = rep(c("-log2(Count)", "log10(OddsRatio)"), each=length(lista_pValues)),
+      x = rep(lista_names, 2),
+      y = lista_total
+    )
+    pdf(file=paste0(name, ".pdf"), width=12, height=6)
+    plot(ggplot(dat, aes(x=x, y=y, fill=type)) + 
+           geom_bar(stat="identity", position="identity") +
+           geom_hline(yintercept = -4.321928, color='green', linetype = "dashed") +
+           coord_flip())
+    dev.off()
     
-    assign(paste0("GOresults", sectors[i], "_", "cluster", "_", n), tmp)
   }
   #KEGG
   tmp = gsea_HyperG_KEGG("KEGG", gsc.KEGG, annotations, 1)
@@ -504,23 +476,9 @@ for (i in 1:(length(GOresultsBP_cluster_list))){
   saveWorkbook(book, paste0("Cluster_", count, ".xlsx"))
 }
 
-GOresultsCC_cluster_0
-
-  lista_pValues = -log2(head(GOresultsCC_cluster_0$Count, 10))
-  lista_estimate = log10(head(GOresultsCC_cluster_0$OddsRatio, 10))
-  lista_total = c(lista_pValues,lista_estimate)
-  lista_names= (head(GOresultsCC_cluster_0$Term, 10))
-  dat <- data.frame(
-    type = rep(c("-log2(Count)", "log10(OddsRatio)"), each=10),
-    x = rep(lista_names, 2),
-    y = lista_total
-  )
-  pdf(file='output_pdf_name.pdf', width=12, height=6)
-  plot(ggplot(dat, aes(x=x, y=y, fill=type)) + 
-         geom_bar(stat="identity", position="identity") +
-         geom_hline(yintercept = -4.321928, color='green', linetype = "dashed") +
-         coord_flip())
-  dev.off()
+#######################################################
+#Save
+save.image("Data_SAVE.RData")  
 
 ################################################################################################################
 ################################################################################################################
