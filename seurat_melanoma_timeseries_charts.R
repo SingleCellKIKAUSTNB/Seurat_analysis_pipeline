@@ -1,3 +1,4 @@
+##########################################################################
 #Blank chart
 blankPlot <- ggplot()+geom_blank(aes(1,1)) +
   theme(axis.line=element_blank(),
@@ -13,6 +14,7 @@ blankPlot <- ggplot()+geom_blank(aes(1,1)) +
         panel.grid.minor=element_blank(),
         plot.background=element_blank())
 
+##########################################################################
 #Visualize data for filtering propouse
 seurat_data_plot<- function(output_pdf_name) {
   pdf(file=output_pdf_name, width=12, height=6)
@@ -50,8 +52,27 @@ seurat_data_plot<- function(output_pdf_name) {
   dev.off()
 }
 
-
-
+##########################################################################
+#Barplot with summary of Info obtained from Oddsratio
+oddsratio_barplot<- function(lista_pValues, lista_estimate, max_cluster, output_pdf_name) {
+  lista_pValues = -log10(lista_pValues)
+  lista_estimate = -(lista_estimate)
+  lista_total = c(lista_pValues,lista_estimate)
+  lista_names= as.character(c(0:(max_cluster-1)))
+  dat <- data.frame(
+    type = rep(c("-log10(pValues)", "-estimate"), each=max_cluster),
+    x = rep(lista_names, 2),
+    y = lista_total
+  )
+  pdf(file=output_pdf_name, width=12, height=6)
+  plot(ggplot(dat, aes(x=x, y=y, fill=type)) + 
+    geom_bar(stat="identity", position="identity") +
+    geom_hline(yintercept = -1, color='red', linetype = "dashed") +
+    geom_hline(yintercept = 2, color='green', linetype = "dashed"))
+  dev.off()
+  
+  return("Oddsratio barplot -> Generated!")
+}
 
 
 

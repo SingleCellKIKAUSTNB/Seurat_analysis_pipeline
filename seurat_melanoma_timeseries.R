@@ -31,10 +31,10 @@ data_prog1 = read10xResults("C:/Users/Analyzer/Desktop/seurat_Melanoma_timeSerie
 data_prog2 = read10xResults("C:/Users/Analyzer/Desktop/seurat_Melanoma_timeSeries/P1020Prog2/GRCh38")
 data_response = read10xResults("C:/Users/Analyzer/Desktop/seurat_Melanoma_timeSeries/P1020Response/GRCh38")
 
-#file_list = c("data_pre","data_post","data_prog1","data_prog2","data_response")
-#list_all = c(data_pre=data_pre,data_post=data_post,data_prog1=data_prog1,data_prog2=data_prog2, data_response=data_response)
-file_list = c("data_pre","data_response")
-list_all = c(data_pre=data_pre, data_response=data_response)
+file_list = c("data_pre","data_post","data_prog1","data_prog2","data_response")
+list_all = c(data_pre=data_pre, data_post=data_post, data_prog1=data_prog1, data_prog2=data_prog2, data_response=data_response)
+#file_list = c("data_pre","data_response")
+#list_all = c(data_pre=data_pre, data_response=data_response)
 
 list_all_Seurat = c()
 rm(list = file_list)
@@ -60,10 +60,16 @@ for (n in 1:length(file_list)){
 rm(keep_feature)
 
 #######################################################
-#Change ENSEMBLE rownames by gene symbols
-for (n in 1:length(file_list)){
-  rownames(list_all[[n]]) = make.unique(as.character(list_all[[n]]@rowRanges@elementMetadata@listData$symbol), sep = "_")
-}
+#Change ENSEMBLE rownames by gene symbols BAD idea better work with ENSEMBLE change at the end
+#for (n in 1:length(file_list)){
+#  rownames(list_all[[n]]) = make.unique(as.character(list_all[[n]]@rowRanges@elementMetadata@listData$symbol), sep = "_")
+#}
+
+#######################################################
+#Create dictionary with ALL ENSEMBLE + GENE_ID
+ensemble=c(list_all[[1]]@rowRanges@elementMetadata@listData$id,list_all[[2]]@rowRanges@elementMetadata@listData$id,list_all[[3]]@rowRanges@elementMetadata@listData$id,list_all[[4]]@rowRanges@elementMetadata@listData$id,list_all[[5]]@rowRanges@elementMetadata@listData$id)
+gene_id=c(list_all[[1]]@rowRanges@elementMetadata@listData$symbol,list_all[[2]]@rowRanges@elementMetadata@listData$symbol,list_all[[3]]@rowRanges@elementMetadata@listData$symbol,list_all[[4]]@rowRanges@elementMetadata@listData$symbol,list_all[[5]]@rowRanges@elementMetadata@listData$symbol)
+notation_dictionary = data.frame(ensemble,gene_id)
 
 #######################################################
 #Define with features(genes,rna,etc) are the ERCC spike-ins and mitochondrial genes
@@ -185,7 +191,7 @@ for (n in 1:length(file_list)){
   lista_var_genes_all = append(lista_var_genes_all, list(rownames(head(list_all_Seurat[[n]]@hvg.info, min(lista_var_genes)))))
 }
 hvg_union = as.data.frame(table(unlist(lista_var_genes_all)))
-hvg_union = hvg_union[hvg_union$Freq > 1,]
+hvg_union = hvg_union[hvg_union$Freq == length(file_list),]
 genes.use  = as.vector(unlist(hvg_union['Var1']))
 
 #######################################################
@@ -195,21 +201,60 @@ for (n in 1:length(file_list)){
 }
 
 rm(lista_var_genes, lista_var_genes_all)
+
+#######################################################
+#Batch correction based in MNN method
+lista_matrix = list()
+for (n in 1:length(file_list)){
+  cols = list_all_Seurat[[n]]@scale.data
+  lista_matrix = append(lista_matrix, list(cols))
+  assign(paste0(file_list[n]), as.matrix(lista_matrix[[n]]))
+  rm(cols)
+}
+overlap_genes = Reduce(intersect, list((rownames(data_pre)), (rownames(data_post)), (rownames(data_prog1)), (rownames(data_prog2)),(rownames(data_response))))
+
+data_pre = data_pre[rownames(data_pre) %in% overlap_genes,]
+data_post = data_post[rownames(data_post) %in% overlap_genes,]
+data_prog1 = data_prog1[rownames(data_prog1) %in% overlap_genes,]
+data_prog2 = data_prog2[rownames(data_prog2) %in% overlap_genes,]
+data_response = data_response[rownames(data_response) %in% overlap_genes,]
+
+temporal = mnnCorrect(data_pre, data_post, data_prog1, data_prog2, data_response, subset.row=genes.use)
+#joint_expression_matrix <- cbind(corrected$corrected[[1]], corrected$corrected[[2]])
+
+for (n in 1:length(file_list)){
+  temporal_final=data.frame(temporal[1]$corrected[[n]])
+  temporal_final <- as.matrix(temporal_final)
+  list_all_Seurat[[n]]@scale.data = temporal_final
+}
+for (n in 1:length(file_list)){
+  rownames(list_all_Seurat[[n]]@scale.data) = rownames(get(file_list[n]))
+  colnames(list_all_Seurat[[n]]@scale.data) = colnames(get(file_list[n]))
+}
+rm(list = file_list)
+
 #######################################################
 #Run CCA
 gc()
 if (length(file_list) >2){
-  for (n in 1:length(file_list)) {
-    genes.use = genes.use[genes.use %in% rownames(list_all_Seurat[[n]]@scale.data)]
-  }
-  multiCCA = RunMultiCCA(list_all_Seurat, genes.use = genes.use, num.ccs = 2)
+  #for (n in 1:length(file_list)) {
+  #  genes.use = genes.use[genes.use %in% rownames(list_all_Seurat[[n]]@scale.data)]
+  #}
+  multiCCA = RunMultiCCA(list_all_Seurat, genes.use = genes.use, num.ccs = 25)
+  pdf(file="PC_selection.pdf")
+  MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:25)
+  dev.off()
+  
 }else{
   multiCCA <- RunCCA(list_all_Seurat[[1]], list_all_Seurat[[2]], genes.use = genes.use)
+  pdf(file="PC_selection.pdf")
+  MetageneBicorPlot(multiCCA, grouping.var = "protocol", dims.eval = 1:2)
+  dev.off()
 }
 
 #######################################################
-#Scale data based in batches
-multiCCA = ScaleData(object = multiCCA, vars.to.regress = c("protocol", "nUMI"))
+#Scale data
+#multiCCA = ScaleData(multiCCA, vars.to.regress = c("protocol"))
 
 #######################################################
 #PC selection
@@ -218,9 +263,16 @@ multiCCA = RunPCA(
   pc.genes = genes.use, 
   do.print = FALSE
 )
-
-pdf(file="PC_selection.pdf")
+pdf(file="PC_selection_1.pdf")
 PCElbowPlot(multiCCA, num.pc = 20)
+dev.off()
+
+multiCCA <- JackStraw(
+  object = multiCCA, 
+  num.replicate = 100
+)
+pdf(file="PC_selection_2.pdf")
+JackStrawPlot(object = multiCCA, PCs = 1:20)
 dev.off()
 
 #######################################################
@@ -235,7 +287,7 @@ dev.off()
 
 #######################################################
 #Before align search cells whose profile cannot be well_explained by low_dimensional CCA compared to low-dimensional PCA
-multiCCA = CalcVarExpRatio(multiCCA, reduction.type = "pca", grouping.var = "protocol", dims.use = 1:2)
+multiCCA = CalcVarExpRatio(multiCCA, reduction.type = "pca", grouping.var = "protocol", dims.use = 1:17)
 multiCCA.all = multiCCA
 
 #######################################################
@@ -246,10 +298,10 @@ multiCCA = SubsetData(multiCCA, subset.name = "var.ratio.pca", accept.low = 0.5)
 multiCCA.discard = SubsetData(multiCCA.all, subset.name = "var.ratio.pca", accept.high = 0.5)
 
 #Align subspaces for obtaining CCA_ALIGNED
-multiCCA = AlignSubspace(multiCCA, reduction.type = "cca", grouping.var = "protocol", dims.align = 1:2)
+multiCCA = AlignSubspace(multiCCA, reduction.type = "cca", grouping.var = "protocol", dims.align = 1:17)
 
 pdf(file="MultiCCA_cc1_cc2_After_Align.pdf", width=12, height=6)
-p1 = DimPlot(multiCCA, reduction.use = "cca", group.by = "protocol", pt.size = 0.5,
+p1 = DimPlot(multiCCA, reduction.use = "cca.aligned", group.by = "protocol", pt.size = 0.5,
               do.return = T)
 p2 = VlnPlot(multiCCA, features.plot = "ACC1", group.by = "protocol", do.return = T)
 plot_grid(p1, p2)
@@ -257,8 +309,8 @@ dev.off()
 
 #######################################################
 #TSNE plot generation
-multiCCA = RunTSNE(multiCCA, reduction.use = "cca.aligned", dims.use = 1:2, do.fast = T, perplexity = 100, check_duplicates = FALSE)
-multiCCA = FindClusters(multiCCA, reduction.type = "cca.aligned", dims.use = 1:2, save.SNN = T)
+multiCCA = RunTSNE(multiCCA, reduction.use = "cca.aligned", dims.use = 1:17, do.fast = T, perplexity = 100, check_duplicates = FALSE)
+multiCCA = FindClusters(multiCCA, reduction.type = "cca.aligned", dims.use = 1:17, save.SNN = T)
 
 pdf(file="TSNE.pdf", width=12, height=6)
 p1 = TSNEPlot(multiCCA, group.by = "protocol", do.return = T, pt.size = 0.5)
@@ -269,20 +321,68 @@ dev.off()
 rownames(multiCCA@dr$tsne@cell.embeddings)
 ls(pattern="data_pre_")
 
-#, cells.use=rowns
-#rowns = rownames(multiCCA@dr$tsne@cell.embeddings)[grepl("data_pre_", rownames(multiCCA@dr$tsne@cell.embeddings)) | grepl("data_response_", rownames(multiCCA@dr$tsne@cell.embeddings))]
+#######################################################
+#Raw data for doing de BULKrna-seq projection
+data_matrix=data.frame(as.matrix(multiCCA@raw.data))
+groups=multiCCA@meta.data$protocol
+
+cluster_ident=data.frame(multiCCA@ident)
+cluster_ident['Cells'] = rownames(cluster_ident)
+
+#######################################################
+#BULK simulation for batch projection in order to see how differet the batches are
+#data_pre=data.frame(as.matrix(counts(data_pre)))
+#data_post=data.frame(as.matrix(counts(data_post)))
+#data_prog1=data.frame(as.matrix(counts(data_prog1)))
+#data_prog2=data.frame(as.matrix(counts(data_prog2)))
+#data_response=data.frame(as.matrix(counts(data_response)))
+#data_matrix = Reduce(function(x, y) merge(x, y, all=TRUE), list(data_pre, data_post))
+
+library("EDASeq")
+
+gc_and_length=getGeneLengthAndGCContent(rownames(data_matrix), 'hsapiens_gene_ensembl', mode=c("biomart"))
+gc_and_length = data.frame(gc_and_length)
+gc_and_length = gc_and_length[complete.cases(gc_and_length), ]
+
+data_matrix = data_matrix[rownames(gc_and_length),]
+
+data_matrix$data_pre_mean = apply(data_matrix[,c(1:1851)],1,sum)
+data_matrix$data_post_mean = apply(data_matrix[,c((1851+1):(1851+1+1289))],1,sum)
+data_matrix$data_prog1_mean = apply(data_matrix[,c((1851+1+1289+1):(1851+1+1289+1+1970))],1,sum)
+data_matrix$data_prog2_mean = apply(data_matrix[,c((1851+1+1289+1+1970+1):(1851+1+1289+1+1970+1+1916))],1,sum)
+data_matrix$data_response = apply(data_matrix[,c((1851+1+1289+1+1970+1+1916+1):(1851+1+1289+1+1970+1+1916+1+1203))],1,sum)
+
+data_matrix_projections = data_matrix[,8235:8239]
+data_matrix_projections_cpm <- edgeR::cpm(data_matrix_projections)
+keep = rowSums(data_matrix_projections_cpm >1) >= 3
+data_matrix_projections_cpm = data_matrix_projections_cpm[keep,]
+
+gc_and_length = gc_and_length[rownames(data_matrix_projections_cpm),]
+gc_content = gc_and_length[,2]
+g_length = gc_and_length[,1]
+
+library("cqn")
+data_matrix_projections_2 = cqn(data_matrix_projections_cpm, x=gc_content,lengths=g_length)
+
+
+library(factoextra)
+res.pca <- prcomp(t(data_matrix_projections_2$counts), scale = TRUE)
+fviz_pca_ind(res.pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+library(Rtsne)
+rtsne_out <- Rtsne(as.matrix(t(data_matrix_projections_2$counts)),perplexity = 1)
+jpeg("TSNE_BULK_RNA-SEQ.jpg", width=1200, height=900)
+plot(rtsne_out$Y, t='n', main="BULK-RNAseq")
+text(rtsne_out$Y, labels=rownames(t(data_matrix_projections_2$counts)))
+dev.off()
 
 ####
 #PROCESSING -> DE ANALYSIS
 ####
-#######################################################
-#Normalized and log transformed data for DE analysis
-data_matrix=data.frame(as.matrix(multiCCA@data))
-
-cluster_ident=data.frame(multiCCA@ident)
-cluster_ident['Cells'] = rownames(cluster_ident)
-cluster_ident = cluster_ident[with(cluster_ident, order(pbmc2.ident)), ]
-
 #######################################################
 #FINDMARKERS all clusters agains rest of cells
 multiCCA.markers = FindAllMarkers(object = multiCCA, only.pos = TRUE, min.pct = 0.25)
@@ -290,8 +390,47 @@ print(x = head(x = multiCCA.markers, n = 5))
 multiCCA.markers = (subset(multiCCA.markers,(multiCCA.markers['p_val_adj'] <= 0.01 )))
 
 #######################################################
+#Prepare data
+max_cluster = max(as.integer(multiCCA.markers$cluster))
+cluster_ident['group'] = multiCCA@meta.data$protocol
+
+#######################################################
+#Plot principal markers for each cluster
+pdf(file="Principal_markers_for_clusters.pdf", width=12, height=6)
+for (n in 0:(max_cluster-1)){
+  FeaturePlot(
+    multiCCA, 
+    head(multiCCA.markers[multiCCA.markers$cluster == n,]$gene, 9), 
+    cols.use = c("lightgrey", "blue"), 
+    nCol = 3
+  )
+}
+dev.off()
+
+#######################################################
 #Save
 save.image("Data_SAVE.RData")
+
+#######################################################
+#Enrichment by cluster
+#Oddsratio loop
+for (n in 1:length(file_list)){
+  lista_pValues = vector()
+  lista_estimate = vector()
+  for (m in 0:(max_cluster-1)){
+    cells_of_cluster_n = subset(cluster_ident,(cluster_ident['multiCCA.ident'] == c(m)))
+    #oddsratio
+    res=oddsratio(as.numeric(table(cells_of_cluster_n$group)[[file_list[n]]]), (sum(table(cells_of_cluster_n$group)) - as.numeric(table(cells_of_cluster_n$group)[[file_list[n]]])), as.numeric(table(cluster_ident$group)[[file_list[n]]]), (sum(table(cluster_ident$group)) - as.numeric(table(cluster_ident$group)[[file_list[n]]])), conf.level=0.95, p.calc.by.independence=TRUE)
+    if (res$p.value == 0){
+      res$p.value = 2.2e-16
+    }
+    lista_pValues = append(lista_pValues, res$p.value)
+    lista_estimate = append(lista_estimate, res$estimate)
+  }
+  #barplot
+  oddsratio_barplot(lista_pValues, lista_estimate, max_cluster, paste0("Barplot_enrichment", file_list[n], ".pdf"))
+}
+
 
 ################################################################################################################
 ################################################################################################################
@@ -301,6 +440,9 @@ save.image("Data_SAVE.RData")
 #######################################################
 gsc.GO = create_GO_universe(org.Hs.egGO, "Homo sapiens")
 gsc.KEGG = create_KEGG_universe(org.Hs.egPATH, "Homo sapiens")
+
+#ListaGenesGO<-as.matrix(geneIds(gsc.GO))
+#ListaGenesGO<-data.frame(ListaGenesGO)
 
 ##############
 #GOstats
@@ -313,14 +455,20 @@ universe = Lkeys(org.Hs.egGO)
 #GO BP / CC / MF
 #######################################################
 sectors = c('BP', 'CC' , 'MF')
-for (n in 0: (max(as.integer(multiCCA.markers$cluster))-1)) {
+for (n in 0:(max_cluster-1)) {
   #GO
   cluster_markers = multiCCA.markers$gene[multiCCA.markers$cluster == n]
   annotation = name_changer('ensembl', 'hsapiens_gene_ensembl', cluster_markers)
-  entrezgene = annotation$entrezgene[match(cluster_markers, annotation$external_gene_name)]
+  entrezgene = annotation$entrezgene[match(cluster_markers, annotation$ensembl_gene_id)]
   annotations = as.character(entrezgene)
   for (i in 1:length(sectors)){
     tmp = gsea_HyperG_GO("GOstats", gsc.GO, annotations, sectors[i], 1)
+    #tmp$genes = ListaGenesGO[match(tmp[,1], rownames(ListaGenesGO)),"ListaGenesGO"]
+    
+    #for (n in 1:length(tmp[,1])){
+    #  tmp$genes[n] = list(annotation$external_gene_name[(annotation$entrezgene %in% unlist(tmp$genes[n])) ==TRUE])
+    #}
+    
     assign(paste0("GOresults", sectors[i], "_", "cluster", "_", n), tmp)
   }
   #KEGG
@@ -338,7 +486,7 @@ KEGGresults_cluster_list = mixedsort(ls(pattern="KEGGresults_cluster_"))
 #######################################################
 #Output -> one cluster for each .xlsx // content (BP/CC/MF/KEGG)
 count = -1
-for (i in 1:(length(GOresultsBP_cluster_list)-1)){
+for (i in 1:(length(GOresultsBP_cluster_list))){
   count = count + 1
   ###
   book=createWorkbook(type="xlsx")
@@ -356,17 +504,23 @@ for (i in 1:(length(GOresultsBP_cluster_list)-1)){
   saveWorkbook(book, paste0("Cluster_", count, ".xlsx"))
 }
 
+GOresultsCC_cluster_0
 
-
-
-
-
-
-#clusters 4
-#genes_to_be_used = subset(multiCCA.markers,(multiCCA.markers['cluster'] == c(4)))
-#genes_to_be_used = as.character(unlist(genes_to_be_used['Genes']))
-#full_table_marker_DE = cc[rownames(cc) %in% genes_to_be_used,]
-#write.table(full_table_marker_DE,"full_table_marker_DE.csv", sep=",")
+  lista_pValues = -log2(head(GOresultsCC_cluster_0$Count, 10))
+  lista_estimate = log10(head(GOresultsCC_cluster_0$OddsRatio, 10))
+  lista_total = c(lista_pValues,lista_estimate)
+  lista_names= (head(GOresultsCC_cluster_0$Term, 10))
+  dat <- data.frame(
+    type = rep(c("-log2(Count)", "log10(OddsRatio)"), each=10),
+    x = rep(lista_names, 2),
+    y = lista_total
+  )
+  pdf(file='output_pdf_name.pdf', width=12, height=6)
+  plot(ggplot(dat, aes(x=x, y=y, fill=type)) + 
+         geom_bar(stat="identity", position="identity") +
+         geom_hline(yintercept = -4.321928, color='green', linetype = "dashed") +
+         coord_flip())
+  dev.off()
 
 ################################################################################################################
 ################################################################################################################
@@ -374,8 +528,17 @@ for (i in 1:(length(GOresultsBP_cluster_list)-1)){
 #NETWORK ANALYSIS -> FOR EACH DE CLUSTER
 ####
 #######################################################
-#Filter for selecting rows and column from count matrix
+#Normalized and log transformed data for DE analysis
+data_matrix=data.frame(as.matrix(multiCCA@data))
+
+#######################################################
+#Filter for selecting rows and column from count matrix selection(genes, cells)
 aracne_use_cluster = create_selection(0,0)
+
+####################################################### 
+#change names
+gene_id_notation = notation_dictionary[match(rownames(aracne_use_cluster), (notation_dictionary$ensemble)), 2]
+rownames(aracne_use_cluster) = gene_id_notation
 
 #######################################################
 #MINET
@@ -400,11 +563,11 @@ aracne_res_cluster_final = tabla
 aracne_res_cluster_final_filt = data.frame(aracne_res_cluster_final)[!duplicated(data.frame(aracne_res_cluster_final)[3]),]
 
 plot(density(as.numeric(tabla[,3])))
-abline(v = c(0.13), col = "red")
+abline(v = c(0.2), col = "red")
 
-aracne_res_cluster_final_filt = (subset(aracne_res_cluster_final_filt,(aracne_res_cluster_final_filt['X3'] >= 0.13 )))
+aracne_res_cluster_final_filt = (subset(aracne_res_cluster_final_filt,(aracne_res_cluster_final_filt['X3'] >= 0.2 )))
 
-write.table(aracne_res_cluster_final_filt,"aracne_res_cluster_final.txt", sep="\t",
+write.table(aracne_res_cluster_final_filt,"Cluster_0_0.txt", sep="\t",
             quote=F,row.names = F,col.names = F)
 
 #########

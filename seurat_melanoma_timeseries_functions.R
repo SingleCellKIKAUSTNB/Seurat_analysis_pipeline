@@ -67,11 +67,11 @@ filter_ERCC_MT<- function(is_spike) {
 }
 
 ##########################################################################
-#Change names
+#Change names ensembl_gene_id  external_gene_name
 name_changer<-function(especie_database, especie_name, x){
   ensembl <- useMart(especie_database, dataset = especie_name)
 
-  annotation = getBM(attributes=c("external_gene_name","entrezgene"), values=x, mart=ensembl)
+  annotation = getBM(attributes=c("ensembl_gene_id","entrezgene"), values=x, mart=ensembl)
   
   return(annotation)
 }
