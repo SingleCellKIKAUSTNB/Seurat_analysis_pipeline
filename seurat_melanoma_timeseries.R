@@ -427,11 +427,11 @@ for (n in 0:(max_cluster-1)) {
     
     #Go-All-Plots
     lista_pValues = -log2(head(get(name)$Count, 10))
-    lista_estimate = log10(head(get(name)$OddsRatio, 10))
+    lista_estimate = log2(head(get(name)$OddsRatio, 10))
     lista_total = c(lista_pValues,lista_estimate)
     lista_names= (head(get(name)$Term, 10))
     dat <- data.frame(
-      type = rep(c("-log2(Count)", "log10(OddsRatio)"), each=length(lista_pValues)),
+      type = rep(c("-log2(Count)", "log2(OddsRatio)"), each=length(lista_pValues)),
       x = rep(lista_names, 2),
       y = lista_total
     )
@@ -439,6 +439,7 @@ for (n in 0:(max_cluster-1)) {
     plot(ggplot(dat, aes(x=x, y=y, fill=type)) + 
            geom_bar(stat="identity", position="identity") +
            geom_hline(yintercept = -4.321928, color='green', linetype = "dashed") +
+           geom_hline(yintercept = 1, color='green', linetype = "dashed") +
            coord_flip())
     dev.off()
     
